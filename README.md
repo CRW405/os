@@ -34,8 +34,8 @@ destiniation <- source ; right to left
 ```
 mov si, 0x7c00  ; put an address into si
 mov al, [si]    ; get byte at that address
-                ; write 'A' at si
 mov byte [si], 'A'
+                ; write 'A' at si
 ```
 
 | Command | Action |
