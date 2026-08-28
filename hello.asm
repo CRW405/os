@@ -1,16 +1,20 @@
 [bits 16]           ; 16 bit encoding
 [org 0x7c00]        ; offset to where BIOS loads the boot sector
 
-start:
-    xor ax, ax      ; 0 the register
-    mov ds, ax      ; zero the rest
-    mov es, ax
+start:              ; set up registers and a stack
+    cli             ; clear interrupt
+    xor ax, ax      ; 0 the register, copy that zero across
+    mov ds, ax      ; data segment
+    mov es, ax      ; extra segment
+    mov ss, ax      ; stack segment
+    mov sp, 0x7c00  ; stack pointer
+    sti             ; re-enable interrupts
     mov si, msg     ; load index with offset of string
 
 print_loop:
     lodsb           ; load string byte - loads si into al and increments si
     or al, al       ; check if null (terminator)
-    ; jz hang       ; jump if zero - if zero flag set and end of string, jump to hang
+    ; jz hang         ; jump if zero - if zero flag set and end of string, jump to hang
     jz shell_loop   ; start echo shell
 
     mov ah, 0x0E    ; BIOS teletype command
