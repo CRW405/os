@@ -117,34 +117,86 @@ shell:
     int 0x10
 
     ; process command here, pass (bp-32)
+    mov bx, command_table
+.dispatch_loop:
+    mov ax, [bx]         ; command name pointer (0 marks end of table)
+    or ax, ax
+    jz .command_done     ; no match - unknown command, do nothing
 
+    mov si, bp
+    sub si, 32           ; si -> start of input buffer (the command line)
+    mov di, ax           ; di -> candidate command name
+    call match_command
+    jnc .dispatch_call   ; matched - si now points at the argument
+
+    add bx, 4            ; next {name, handler} table entry
+    jmp .dispatch_loop
+.dispatch_call:
+    mov ax, [bx+2]       ; handler address
+    push si              ; arg for the handler (points into the input buffer)
+    call ax
+    add sp, 2
+.command_done:
     mov sp, bp
     pop bp
     jmp shell
 
-strcmp:
-    push bp
-    mov bp, sp
-    mov si, [bp+4]       ; string 1
-    mov di, [bp+6]       ; string 2
-.loop:
-    mov al, [si]
-    mov bl, [di]
-    cmp al, bl
-    jne .notequal
+; compare the input buffer (si) against a null-terminated command name (di)
+; on match:    si -> start of the argument (or its trailing null), CF clear
+; on mismatch: CF set
+match_command:
+.compare_loop:
+    mov al, [di]
     or al, al
-    jz .equal
+    jz .name_matched     ; reached the end of the command name
+    cmp al, [si]
+    jne .mismatch
     inc si
     inc di
-    jmp .loop
-.notequal:
-    mov ax, 1            ; return non-zero (not equal)
-    jmp .done
-.equal:
-    xor ax, ax           ; return 0 (equal)
-.done:
+    jmp .compare_loop
+.name_matched:
+    ; si is right after the matched name in the input - must be a space or end of line
+    cmp byte [si], ' '
+    je .has_arg
+    cmp byte [si], 0
+    jne .mismatch        ; e.g. "echoes" typed against "echo"
+    clc
+    ret
+.has_arg:
+    inc si               ; skip the space, si -> argument
+    clc
+    ret
+.mismatch:
+    stc
+    ret
+
+; echo <arg> - print the argument back out, followed by a newline
+; expects: [bp+4] = pointer to the (possibly empty) argument string
+cmd_echo:
+    push bp
+    mov bp, sp
+
+    mov ax, [bp+4]
+    push ax
+    call print
+    add sp, 2
+
+    mov ah, 0x0E
+    mov al, 0x0D
+    int 0x10
+    mov al, 0x0A
+    int 0x10
+
     pop bp
     ret
+
+; {name pointer, handler pointer} pairs, terminated by a null name pointer
+command_table:
+    dw echo_cmd, cmd_echo
+    dw 0
+
+echo_cmd:
+    db "echo", 0
 
 ; define string data
 hello:
