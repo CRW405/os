@@ -1,15 +1,29 @@
-CMakeLists.txt.user
+# Local cross-compiler toolchain (built from source, ~3.5G, not project code)
+C/gcc/
+
+# CMake build directories
+build/
 CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
+CMakeFiles/
+CMakeScripts/
+Testing/
 Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
-_deps
+_deps/
 CMakeUserPresets.json
+CMakeLists.txt.user
+
+# Compiled/assembled outputs
+*.o
+*.elf
+*.bin
+*.img
+*.iso
+/shell
+/hello
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

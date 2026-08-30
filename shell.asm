@@ -59,9 +59,9 @@ shell:
     sub di, 32          ; move to start of buffer
 
     xor al, al
+    xor ax, ax
     mov cx, 16          ; 16 words in 32 bytes
     rep stosw           ; fill with zero, "repeat" store ax from es to di then increment di by 2
-    mov cx, 0           ; string length
 .read_keypress:
     mov ah, 0x00        ; BIOS get keypress
     int 0x16            ; returns ASCII in al
