@@ -1,10 +1,10 @@
 # 12 byte GRUB header
 .set MAGIC,     0x1BADB002          # GRUB looks for this value
 .set FLAGS,     0x0                 # bitmask based GRUB requests,
-                                     # explicitly stating none
-                                     # bit 0 - align boot modules on 4kb page bounds
-                                     # bit 1 - bootloader must pass memory map
-                                     # bit 2 - bootloader must pass video mode info
+                                    # explicitly stating none
+                                    # bit 0 - align boot modules on 4kb page bounds
+                                    # bit 1 - bootloader must pass memory map
+                                    # bit 2 - bootloader must pass video mode info
 .set CHECKSUM,  -(MAGIC + FLAGS)    # header checksums
 
 # build the header section

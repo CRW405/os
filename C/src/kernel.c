@@ -24,6 +24,8 @@ void kernel_main(void) {
 
 	clear_vga();
 	write_vga_line(VGA_HEIGHT / 2, msg);
+	const char *hi = "hi";
+	write_vga_line(VGA_HEIGHT - 1, hi);
 
 	for (;;) {
 		// halt loop
