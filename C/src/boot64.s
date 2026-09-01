@@ -48,7 +48,8 @@ gdt64:
     .quad 0             # emits 8 byte value. GDT must start with 8 null bytes
 gdt64_code:
 # execs | code/data type | present | long mode
-    .quad (1<<43) | (1<<44) | (1<< 47) | (1<<55)
+    .quad (1<<43) | (1<<44) | (1<< 47) | (1<<53)
+    # .quad (1<<43) | (1<<44) | (1<< 47) | (1<<55)
 gdt64_pointer:
     .word . - gdt64 - 1
     .quad gdt64
