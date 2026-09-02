@@ -365,6 +365,10 @@ void irq1_handler(void) {
 
 	if (!(scancode & 0x80)) { // key press (not release)
 		char c = scancode_ascii[scancode];
+		if (!c) {
+			outb(PIC1_COMMAND, 0x20); // if cant get char, ignore
+			return;
+		}
 
 		switch (c) {
 		case '\n':
@@ -382,7 +386,7 @@ void irq1_handler(void) {
 			break;
 		default:
 			if (input_length < INPUT_BUFFER_SIZE - 1) {
-				input_buffer[input_length++] = scancode_ascii[scancode];
+				input_buffer[input_length++] = c;
 				vga_putc(scancode_ascii[scancode]);
 			}
 			break;
