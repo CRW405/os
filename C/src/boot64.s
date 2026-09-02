@@ -1,4 +1,12 @@
-# 64 bit multiboot header
+# =====================================================================
+# Multiboot2 header
+#
+# Same idea as the multiboot1 header in boot32.s — GRUB scans for this
+# magic number near the start of the image to recognize a bootable
+# kernel — but multiboot2's layout is tag-based instead of fixed-field,
+# so it needs an explicit end tag and an 8-byte alignment.
+# =====================================================================
+
 .set MB2_MAGIC,  0xE85250D6                                 # GRUB looks for this magic number
 .set MB2_ARCH,   0                                          # architecture field, 0 = i386/protected mode
 .set MB2_HDR_LEN, (mb2_header_end - mb2_header_start)       # precompute distance so that things line up
@@ -28,7 +36,15 @@ mb2_header_start:
     .long 8
 mb2_header_end:
 
-# reserving memory for the stack and page tables
+# =====================================================================
+# BSS reservations: page tables and stack
+#
+# Long mode requires paging to be enabled, so before we can even get
+# there we need memory for a page table hierarchy (p4 -> p3 -> p2) and
+# a stack. All zero-initialized, so it lives in .bss rather than
+# taking up space in the binary on disk.
+# =====================================================================
+
 .section .bss
 .align 4096
 p4_table:
@@ -42,17 +58,33 @@ stack_bottom:
     .skip 16384
 stack_top:
 
+# =====================================================================
 # Global Descriptor Table
+#
+# Long mode's paging does the real memory protection, so segmentation
+# is basically turned off — but the CPU still requires a GDT with at
+# least a valid code segment to far-jump into 64-bit mode and set %cs.
+# =====================================================================
+
 .section .rodata
 gdt64:
     .quad 0             # emits 8 byte value. GDT must start with 8 null bytes
 gdt64_code:
 # execs | code/data type | present | long mode
     .quad (1<<43) | (1<<44) | (1<< 47) | (1<<53)
-    # .quad (1<<43) | (1<<44) | (1<< 47) | (1<<55)
 gdt64_pointer:
     .word . - gdt64 - 1
     .quad gdt64
+
+# =====================================================================
+# Entry point: 32-bit setup before the jump to long mode
+#
+# GRUB drops us here in 32-bit protected mode. Before we can run 64-bit
+# code we have to: confirm the CPU actually supports what we need
+# (multiboot handoff, CPUID, long mode), build identity-mapped page
+# tables, flip on paging, then load the GDT and far-jump into 64-bit
+# mode.
+# =====================================================================
 
 .section .text
 .code32
@@ -147,6 +179,15 @@ enable_paging:
 .halt:
     hlt
     jmp .halt
+
+# =====================================================================
+# 64-bit entry point
+#
+# We land here after the far jump reloads %cs with the 64-bit code
+# segment. The other segment registers still hold stale 32-bit
+# selectors; since segmentation isn't really used in long mode, they're
+# just zeroed out rather than reloaded from the GDT.
+# =====================================================================
 
 .code64
 long_mode_start:

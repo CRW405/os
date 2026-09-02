@@ -1,3 +1,11 @@
+# =====================================================================
+# Multiboot header
+#
+# GRUB scans the first 8 KiB of the kernel image for this magic number.
+# If found, it reads FLAGS/CHECKSUM right after it to confirm the image
+# is a valid multiboot kernel, then loads it and jumps to _start.
+# =====================================================================
+
 # 12 byte GRUB header
 .set MAGIC,     0x1BADB002          # GRUB looks for this value
 .set FLAGS,     0x0                 # bitmask based GRUB requests,
@@ -14,15 +22,28 @@
 .long    FLAGS
 .long    CHECKSUM
 
-# create stack
+# =====================================================================
+# Stack
+#
+# There's no stack until we make one — GRUB doesn't set one up for us.
+# .skip just reserves uninitialized space in .bss; stack_top is where
+# %esp gets pointed since the stack grows downward from there.
+# =====================================================================
+
 .section .bss
 .align   16
 stack_bottom:
 .skip 16384     # 16 kib stack
 stack_top:
 
-# set entry point
-# this is where GRUB first jumps to code-wise
+# =====================================================================
+# Entry point
+#
+# This is where GRUB first jumps to code-wise. We're in 32-bit protected
+# mode at this point, with no C runtime, so the very first thing to do
+# is set up a stack before calling into C.
+# =====================================================================
+
 .section .text
 .global  _start
 

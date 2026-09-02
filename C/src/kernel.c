@@ -1,17 +1,28 @@
 #include <stdint.h>
 
+// =====================================================================
+// IDT (Interrupt Descriptor Table)
+//
+// The IDT tells the CPU where to jump when an interrupt or exception
+// fires (e.g. divide-by-zero, keyboard input, timer ticks). Each entry
+// points at a small assembly "stub" (in isr.s) that saves registers and
+// calls into the matching *_handler() function below.
+// =====================================================================
+
 #define IDT_SIZE 256
-#define GATE_INTERRUPT 0x8E
-// 0x8E = present, ring 0, 64-bit interrupt gate
+#define GATE_INTERRUPT 0x8E // present, ring 0, 64-bit interrupt gate
 
-extern void isr0(void); // divide by zero
+// assembly stubs defined in isr.s
+extern void isr0(void); // divide by zero exception
+extern void irq0(void); // IRQ0: timer
+extern void irq1(void); // IRQ1: keyboard
 
-// mirror the 64 bit interrupt descriptor table
+// mirrors the CPU's 64-bit interrupt descriptor table entry layout
 struct idt_entry {
 	uint16_t offset_low;  // handler address bits 0..15
 	uint16_t selector;    // code segment selector
-	uint8_t  ist;         // interrupt stack table index, 0 = not used
-	uint8_t  type_attr;   // gate type, privilege level, present bit
+	uint8_t ist;          // interrupt stack table index, 0 = not used
+	uint8_t type_attr;    // gate type, privilege level, present bit
 	uint16_t offset_mid;  // handler address bits 16..31
 	uint32_t offset_high; // handler address bits 32..63
 	uint32_t zero;        // reserved, must be zero
@@ -23,30 +34,39 @@ struct idt_ptr {
 } __attribute__((packed));
 
 static struct idt_entry idt[IDT_SIZE];
-static struct idt_ptr   idt_ptr;
+static struct idt_ptr idt_ptr;
 
+// fills in one IDT entry so `vector` jumps to `handler` on interrupt
 void idt_set_entry(int vector, void (*handler)(), uint8_t type_attr) {
-	uint64_t address        = (uint64_t)handler; // addresss of handler as 64 bit integer
-	idt[vector].offset_low  = address & 0xFFFF;
-	idt[vector].selector    = 0x08;
-	idt[vector].ist         = 0;
-	idt[vector].type_attr   = type_attr;
-	idt[vector].offset_mid  = (address >> 16) & 0xFFFF;
+	uint64_t address = (uint64_t)handler; // handler address as a 64-bit integer
+
+	idt[vector].offset_low = address & 0xFFFF;
+	idt[vector].selector = 0x08;
+	idt[vector].ist = 0;
+	idt[vector].type_attr = type_attr;
+	idt[vector].offset_mid = (address >> 16) & 0xFFFF;
 	idt[vector].offset_high = (address >> 32) & 0xFFFFFFFF;
-	idt[vector].zero        = 0;
+	idt[vector].zero = 0;
 }
 
+// builds the IDT and loads it with the `lidt` instruction
 void idt_init(void) {
-	idt_set_entry(0, isr0, GATE_INTERRUPT); // divide by zero exception
+	idt_set_entry(0, isr0, GATE_INTERRUPT);  // divide by zero exception
+	idt_set_entry(32, irq0, GATE_INTERRUPT); // IRQ0 for timer
+	idt_set_entry(33, irq1, GATE_INTERRUPT); // IRQ1 for keyboard, 32 + 1
 
 	idt_ptr.limit = sizeof(idt) - 1;
-	idt_ptr.base  = (uint64_t)&idt;
+	idt_ptr.base = (uint64_t)&idt;
 
-	__asm__ volatile("lidt %0" : : "m"(idt_ptr)); // load the IDT pointer into the CPU
+	__asm__ volatile("lidt %0" : : "m"(idt_ptr));
 }
 
-const int            VGA_WIDTH                = 80;
-const int            VGA_HEIGHT               = 25;
+// =====================================================================
+// VGA text mode output
+// =====================================================================
+
+const int VGA_WIDTH = 80;
+const int VGA_HEIGHT = 25;
 const unsigned short VGA_WHITE_ON_BLACK_STYLE = 0x0700;
 
 // vga text memory, ASCII byte + color byte
@@ -66,31 +86,130 @@ void clear_vga(void) {
 	}
 }
 
+// =====================================================================
+// Port I/O helpers
+//
+// `in`/`out` talk to hardware over the x86 I/O port space (separate from
+// memory addresses) — used here to program the PIC and read the keyboard.
+// =====================================================================
+
+static inline void outb(uint16_t port, uint8_t val) {
+	__asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port) {
+	uint8_t ret;
+	__asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
+	return ret;
+}
+
+// =====================================================================
+// PIC (8259 Programmable Interrupt Controller)
+//
+// By default the PIC fires IRQs on vectors 0-15, which collide with CPU
+// exceptions. Remapping moves them to 32-47 so they don't overlap.
+// =====================================================================
+
+#define PIC1_COMMAND 0x20
+#define PIC1_DATA 0x21
+#define PIC2_COMMAND 0xA0
+#define PIC2_DATA 0xA1
+
+void pic_remap(void) {
+	// save current masks
+	uint8_t mask1 = inb(PIC1_DATA);
+	uint8_t mask2 = inb(PIC2_DATA);
+
+	// start init sequence in cascade mode
+	outb(PIC1_COMMAND, 0x11);
+	outb(PIC2_COMMAND, 0x11);
+
+	// remap master PIC -> 32-39, slave PIC -> 40-47
+	outb(PIC1_DATA, 0x20);
+	outb(PIC2_DATA, 0x28);
+
+	outb(PIC1_DATA, 0x04); // tell master PIC there's a slave at IRQ2
+	outb(PIC2_DATA, 0x02); // tell slave PIC its cascade identity
+
+	// set 8086 mode
+	outb(PIC1_DATA, 0x01);
+	outb(PIC2_DATA, 0x01);
+
+	// restore masks, but unmask IRQ1 (keyboard) on master
+	outb(PIC1_DATA, mask1 & ~0x02);
+	outb(PIC2_DATA, mask2);
+}
+
+// =====================================================================
+// Interrupt handlers
+//
+// Called from the assembly stubs in isr.s after registers are saved.
+// =====================================================================
+
+// vector 0: divide by zero
 void isr_handler(void) {
-	// handle the interrupt
 	write_vga_line(0, "Divide by zero exception!");
 	for (;;) {
 		__asm__("hlt");
 	}
 }
 
+// scancode set 1 -> ASCII, indexed by the raw byte read from the keyboard
+// controller. 0 means "no ASCII equivalent" (shift, ctrl, arrow keys, etc).
+// clang-format off
+static const char scancode_ascii[128] = {
+    0, 27, '1','2','3','4','5','6','7','8','9','0','-','=','\b',
+    '\t',   'q','w','e','r','t','y','u','i','o','p','[',']','\n',
+    0,       'a','s','d','f','g','h','j','k','l',';','\'','`',
+    0, '\\',  'z','x','c','v','b','n','m',',','.','/', 0,
+    '*', 0, ' ',
+};
+// clang-format on
+
+// holds the most recently typed character, displayed on the last VGA row
+static char last_char[2] = { 0, 0 };
+
+// vector 33 (IRQ1): keyboard
+void irq1_handler(void) {
+	uint8_t scancode = inb(0x60);
+
+	if (!(scancode & 0x80)) { // top bit clear = key press, not release
+		char c = scancode_ascii[scancode];
+		if (c) {
+			last_char[0] = c;
+			write_vga_line(VGA_HEIGHT - 1, last_char);
+		}
+	}
+
+	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
+}
+
+// vector 32 (IRQ0): timer, currently just acknowledged and ignored
+void irq0_handler(void) {
+	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
+}
+
+// =====================================================================
+// Entry point
+// =====================================================================
+
 void kernel_main(void) {
 	idt_init();
+	pic_remap();
+	__asm__ volatile("sti"); // enable interrupts
 
 	const char *msg = "Hello, World! Goodbye. Space?";
 
 	clear_vga();
 	write_vga_line(VGA_HEIGHT / 2, msg);
-	const char *hi = "hi";
-	write_vga_line(VGA_HEIGHT - 1, hi);
 
-	// !!! make sure -O is set to 0 for this to not be optimized away
-	volatile int a = 1, b = 0;
-	int          c = a / b; // this will trigger the divide by zero exception
-	(void)c;                // avoid unused variable warning
+	// // !!! make sure -O is set to 0 for this to not be optimized away
+	// volatile int a = 1, b = 0;
+	// int c = a / b; // this will trigger the divide by zero exception
+	// (void)c;       // avoid unused variable warning
 
 	for (;;) {
-		// halt loop
+		// halt until the next interrupt (timer/keyboard) instead of spinning
 		__asm__("hlt");
 	}
 }
