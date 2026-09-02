@@ -21,8 +21,8 @@ extern void irq1(void); // IRQ1: keyboard
 struct idt_entry {
 	uint16_t offset_low;  // handler address bits 0..15
 	uint16_t selector;    // code segment selector
-	uint8_t ist;          // interrupt stack table index, 0 = not used
-	uint8_t type_attr;    // gate type, privilege level, present bit
+	uint8_t  ist;         // interrupt stack table index, 0 = not used
+	uint8_t  type_attr;   // gate type, privilege level, present bit
 	uint16_t offset_mid;  // handler address bits 16..31
 	uint32_t offset_high; // handler address bits 32..63
 	uint32_t zero;        // reserved, must be zero
@@ -34,19 +34,19 @@ struct idt_ptr {
 } __attribute__((packed));
 
 static struct idt_entry idt[IDT_SIZE];
-static struct idt_ptr idt_ptr;
+static struct idt_ptr   idt_ptr;
 
 // fills in one IDT entry so `vector` jumps to `handler` on interrupt
 void idt_set_entry(int vector, void (*handler)(), uint8_t type_attr) {
 	uint64_t address = (uint64_t)handler; // handler address as a 64-bit integer
 
-	idt[vector].offset_low = address & 0xFFFF;
-	idt[vector].selector = 0x08;
-	idt[vector].ist = 0;
-	idt[vector].type_attr = type_attr;
-	idt[vector].offset_mid = (address >> 16) & 0xFFFF;
+	idt[vector].offset_low  = address & 0xFFFF;
+	idt[vector].selector    = 0x08;
+	idt[vector].ist         = 0;
+	idt[vector].type_attr   = type_attr;
+	idt[vector].offset_mid  = (address >> 16) & 0xFFFF;
 	idt[vector].offset_high = (address >> 32) & 0xFFFFFFFF;
-	idt[vector].zero = 0;
+	idt[vector].zero        = 0;
 }
 
 // builds the IDT and loads it with the `lidt` instruction
@@ -56,7 +56,7 @@ void idt_init(void) {
 	idt_set_entry(33, irq1, GATE_INTERRUPT); // IRQ1 for keyboard, 32 + 1
 
 	idt_ptr.limit = sizeof(idt) - 1;
-	idt_ptr.base = (uint64_t)&idt;
+	idt_ptr.base  = (uint64_t)&idt;
 
 	__asm__ volatile("lidt %0" : : "m"(idt_ptr));
 }
@@ -65,8 +65,8 @@ void idt_init(void) {
 // VGA text mode output
 // =====================================================================
 
-const int VGA_WIDTH = 80;
-const int VGA_HEIGHT = 25;
+const int            VGA_WIDTH                = 80;
+const int            VGA_HEIGHT               = 25;
 const unsigned short VGA_WHITE_ON_BLACK_STYLE = 0x0700;
 
 // vga text memory, ASCII byte + color byte
@@ -208,6 +208,34 @@ void irq0_handler(void) {
 }
 
 // =====================================================================
+// Cursor
+// =====================================================================
+
+unsigned char cursor_visible = 1;
+
+void enable_cursor(uint8_t start, uint8_t end) {
+	outb(0x3D4, 0x0A);
+	outb(0x3D5, (inb(0x3D5) & 0xC0) | start);
+
+	outb(0x3D4, 0x0B);
+	outb(0x3D5, (inb(0x3D5) & 0xE0) | end);
+}
+
+void disable_cursor(void) {
+	outb(0x3D4, 0x0A);
+	outb(0x3D5, 0x20);
+}
+
+void update_cursor(int x, int y) {
+	uint16_t pos = y * VGA_WIDTH + x;
+
+	outb(0x3D4, 0x0F);
+	outb(0x3D5, (uint8_t)(pos & 0xFF));
+	outb(0x3D4, 0x0E);
+	outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
+}
+
+// =====================================================================
 // String Helpers
 // =====================================================================
 
@@ -260,12 +288,24 @@ void cmd_clear(const char *args) {
 	clear_vga();
 }
 
-void divide_by_zero(const char *args) {
+void cmd_divide_by_zero(const char *args) {
 	(void)args;
 	// -O should be at 0 to prevent the compiler from optimizing out the divide by zero
 	volatile int a = 1, b = 0;
-	int c = a / b; // this will trigger the divide by zero exception
+	int          c = a / b; // this will trigger the divide by zero exception
 	(void)c;
+}
+
+void cmd_toggle_cursor(const char *args) {
+	(void)args;
+	if (cursor_visible > 0) {
+		cursor_visible = 0;
+		disable_cursor();
+	} else {
+		cursor_visible = 1;
+		enable_cursor(13, 14);
+		update_cursor(cursor_col, cursor_row);
+	}
 }
 
 struct cmd {
@@ -274,10 +314,11 @@ struct cmd {
 };
 
 static const struct cmd cmd_table[] = {
-	{ "echo",           cmd_echo       },
-	{ "clear",          cmd_clear      },
-	{ "divide-by-zero", divide_by_zero },
-	{ 0,	            0	          }  // sentinel
+	{ "e",    cmd_echo           },
+	{ "clr",  cmd_clear          },
+	{ "dbz",  cmd_divide_by_zero },
+	{ "tcur", cmd_toggle_cursor  },
+	{ 0,      0	              }  // sentinel
 };
 
 void shell_dispatch(const char *line) {
@@ -298,10 +339,12 @@ void shell_dispatch(const char *line) {
 
 #define INPUT_BUFFER_SIZE 128
 static char input_buffer[INPUT_BUFFER_SIZE];
-static int input_length = 0;
+static int  input_length = 0;
+
+const char *prompt = "O-(^W^)-> ";
 
 void shell_prompt(void) {
-	vga_puts("O-(^W^)-> ");
+	vga_puts(prompt);
 }
 
 // scancode set 1 -> ASCII, indexed by the raw byte read from the keyboard
@@ -344,6 +387,7 @@ void irq1_handler(void) {
 			}
 			break;
 		}
+		update_cursor(cursor_col, cursor_row);
 	}
 
 	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
@@ -359,6 +403,7 @@ void kernel_main(void) {
 	__asm__ volatile("sti"); // enable interrupts
 
 	clear_vga();
+	enable_cursor(13, 14);
 	const char *msg = "Hello, World! Goodbye. Space?\n";
 	vga_puts(msg);
 	shell_prompt();
