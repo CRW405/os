@@ -86,6 +86,54 @@ void clear_vga(void) {
 	}
 }
 
+static int cursor_row = 0;
+static int cursor_col = 0;
+
+void vga_scroll(void) {
+	// move all lines up by one
+	for (int row = 1; row < VGA_HEIGHT; row++) {
+		for (int col = 0; col < VGA_WIDTH; col++) {
+			vga[(row - 1) * VGA_WIDTH + col] = vga[row * VGA_WIDTH + col];
+		}
+	}
+	// clear the last line
+	for (int col = 0; col < VGA_WIDTH; col++) {
+		vga[(VGA_HEIGHT - 1) * VGA_WIDTH + col] = (unsigned short)' ' | VGA_WHITE_ON_BLACK_STYLE;
+	}
+	cursor_row = VGA_HEIGHT - 1;
+}
+
+void vga_putc(char c) {
+	switch (c) {
+	case '\n':
+		cursor_col = 0;
+		cursor_row++;
+		break;
+	case '\b':
+		if (cursor_col > 0) {
+			cursor_col--;
+			vga[cursor_row * VGA_WIDTH + cursor_col] = (unsigned short)' ' | VGA_WHITE_ON_BLACK_STYLE;
+		}
+		break;
+	default:
+		vga[cursor_row * VGA_WIDTH + cursor_col] = (unsigned short)c | VGA_WHITE_ON_BLACK_STYLE;
+		cursor_col++;
+		if (cursor_col >= VGA_WIDTH) {
+			cursor_col = 0;
+		}
+		break;
+	}
+	if (cursor_row >= VGA_HEIGHT) {
+		vga_scroll();
+	}
+}
+
+void vga_puts(const char *s) {
+	while (*s) {
+		vga_putc(*s++);
+	}
+}
+
 // =====================================================================
 // Port I/O helpers
 //
@@ -154,6 +202,108 @@ void isr_handler(void) {
 	}
 }
 
+// vector 32 (IRQ0): timer, currently just acknowledged and ignored
+void irq0_handler(void) {
+	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
+}
+
+// =====================================================================
+// String Helpers
+// =====================================================================
+
+int strlen(const char *s) {
+	int len = 0;
+	while (s[len]) {
+		len++;
+	}
+	return len;
+}
+
+int strcmp(const char *s1, const char *s2) {
+	while (*s1 && (*s1 == *s2)) {
+		s1++;
+		s2++;
+	}
+	return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+}
+
+// check if s1 starts with s2, and if so return a pointer to the first
+// character after the match or the first space after the match, otherwise null.
+// differentiates between 'echoes' and 'echo'
+const char *str_match_prefix(const char *s1, const char *s2) {
+	while (*s2) {
+		if (*s1 != *s2)
+			return 0;
+		s1++;
+		s2++;
+	}
+	if (*s1 == ' ')
+		return s1 + 1;
+	if (*s1 == 0)
+		return s1;
+	return 0;
+}
+
+// =====================================================================
+// Shell
+// =====================================================================
+
+void cmd_echo(const char *args) {
+	vga_puts(args);
+	vga_putc('\n');
+}
+
+void cmd_clear(const char *args) {
+	(void)args;
+	cursor_row = 0;
+	cursor_col = 0;
+	clear_vga();
+}
+
+void divide_by_zero(const char *args) {
+	(void)args;
+	// -O should be at 0 to prevent the compiler from optimizing out the divide by zero
+	volatile int a = 1, b = 0;
+	int c = a / b; // this will trigger the divide by zero exception
+	(void)c;
+}
+
+struct cmd {
+	const char *name;
+	void (*handler)(const char *args);
+};
+
+static const struct cmd cmd_table[] = {
+	{ "echo",           cmd_echo       },
+	{ "clear",          cmd_clear      },
+	{ "divide-by-zero", divide_by_zero },
+	{ 0,	            0	          }  // sentinel
+};
+
+void shell_dispatch(const char *line) {
+	for (int i = 0; cmd_table[i].name; i++) {
+		const char *args = str_match_prefix(line, cmd_table[i].name);
+		if (args) {
+			cmd_table[i].handler(args);
+			return;
+		}
+	}
+
+	if (*line) {
+		vga_puts("Unknown command: ");
+		vga_puts(line);
+		vga_putc('\n');
+	}
+}
+
+#define INPUT_BUFFER_SIZE 128
+static char input_buffer[INPUT_BUFFER_SIZE];
+static int input_length = 0;
+
+void shell_prompt(void) {
+	vga_puts("O-(^W^)-> ");
+}
+
 // scancode set 1 -> ASCII, indexed by the raw byte read from the keyboard
 // controller. 0 means "no ASCII equivalent" (shift, ctrl, arrow keys, etc).
 // clang-format off
@@ -166,26 +316,36 @@ static const char scancode_ascii[128] = {
 };
 // clang-format on
 
-// holds the most recently typed character, displayed on the last VGA row
-static char last_char[2] = { 0, 0 };
-
 // vector 33 (IRQ1): keyboard
 void irq1_handler(void) {
 	uint8_t scancode = inb(0x60);
 
-	if (!(scancode & 0x80)) { // top bit clear = key press, not release
+	if (!(scancode & 0x80)) { // key press (not release)
 		char c = scancode_ascii[scancode];
-		if (c) {
-			last_char[0] = c;
-			write_vga_line(VGA_HEIGHT - 1, last_char);
+
+		switch (c) {
+		case '\n':
+			input_buffer[input_length] = 0;
+			vga_putc('\n');
+			shell_dispatch(input_buffer);
+			input_length = 0;
+			shell_prompt();
+			break;
+		case '\b':
+			if (input_length > 0) {
+				input_length--;
+				vga_putc('\b');
+			}
+			break;
+		default:
+			if (input_length < INPUT_BUFFER_SIZE - 1) {
+				input_buffer[input_length++] = scancode_ascii[scancode];
+				vga_putc(scancode_ascii[scancode]);
+			}
+			break;
 		}
 	}
 
-	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
-}
-
-// vector 32 (IRQ0): timer, currently just acknowledged and ignored
-void irq0_handler(void) {
 	outb(PIC1_COMMAND, 0x20); // send end-of-interrupt to master PIC
 }
 
@@ -198,15 +358,10 @@ void kernel_main(void) {
 	pic_remap();
 	__asm__ volatile("sti"); // enable interrupts
 
-	const char *msg = "Hello, World! Goodbye. Space?";
-
 	clear_vga();
-	write_vga_line(VGA_HEIGHT / 2, msg);
-
-	// // !!! make sure -O is set to 0 for this to not be optimized away
-	// volatile int a = 1, b = 0;
-	// int c = a / b; // this will trigger the divide by zero exception
-	// (void)c;       // avoid unused variable warning
+	const char *msg = "Hello, World! Goodbye. Space?\n";
+	vga_puts(msg);
+	shell_prompt();
 
 	for (;;) {
 		// halt until the next interrupt (timer/keyboard) instead of spinning
