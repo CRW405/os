@@ -211,7 +211,7 @@ void irq0_handler(void) {
 // Cursor
 // =====================================================================
 
-unsigned char cursor_visible = 1;
+static unsigned char cursor_visible = 1;
 
 void enable_cursor(uint8_t start, uint8_t end) {
 	outb(0x3D4, 0x0A);
@@ -270,6 +270,25 @@ const char *str_match_prefix(const char *s1, const char *s2) {
 	if (*s1 == 0)
 		return s1;
 	return 0;
+}
+
+// lowercase a alphabetical character
+char clower(char c) {
+	if (c >= 'A' && c <= 'Z') {
+		return c + ('a' - 'A');
+	}
+	return c;
+}
+
+// lowercase a string
+const char *strlower(const char *s) {
+	static char buf[256];
+	int         i;
+	for (i = 0; s[i]; i++) {
+		buf[i] = clower(s[i]);
+	}
+	buf[i] = 0;
+	return buf;
 }
 
 // =====================================================================
@@ -347,6 +366,25 @@ void shell_prompt(void) {
 	vga_puts(prompt);
 }
 
+#define SC_LSHIFT 0x2A
+#define SC_RSHIFT 0x36
+#define SC_LSHIFT_UP 0xAA
+#define SC_RSHIFT_UP 0xB6
+#define SC_CAPSLOCK 0x3A
+#define SC_LCTRL 0x1D
+#define SC_RCTRL 0x38
+#define SC_LCTRL_UP 0x9D
+#define SC_RCTRL_UP 0xB8
+#define SC_LALT 0x38
+#define SC_RALT 0x38
+#define SC_LALT_UP 0xB8
+#define SC_RALT_UP 0xB8
+
+static unsigned char shift_pressed = 0;
+static unsigned char caps_lock_on  = 0;
+static unsigned char ctrl_pressed  = 0;
+static unsigned char alt_pressed   = 0;
+
 // scancode set 1 -> ASCII, indexed by the raw byte read from the keyboard
 // controller. 0 means "no ASCII equivalent" (shift, ctrl, arrow keys, etc).
 // clang-format off
@@ -357,17 +395,93 @@ static const char scancode_ascii[128] = {
     0, '\\',  'z','x','c','v','b','n','m',',','.','/', 0,
     '*', 0, ' ',
 };
+
+static const char scancode_ascii_shift[128] = {
+    0, 27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
+    '\t',   'Q','W','E','R','T','Y','U','I','O','P','{','}', '\n',
+    0,       'A','S','D','F','G','H','J','K','L',':','\"','~',
+    0, '|',    'Z','X','C','V','B','N','M', '<', '>', '?', 0,
+    '*', 0, ' ',
+};
 // clang-format on
 
 // vector 33 (IRQ1): keyboard
 void irq1_handler(void) {
 	uint8_t scancode = inb(0x60);
 
+	// apply modifier keys
+	switch (scancode) {
+	case SC_LSHIFT:
+	case SC_RSHIFT:
+		shift_pressed = 1;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_LSHIFT_UP:
+	case SC_RSHIFT_UP:
+		shift_pressed = 0;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_CAPSLOCK:
+		caps_lock_on = !caps_lock_on;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_LCTRL:
+		// case SC_RCTRL:
+		ctrl_pressed = 1;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_LCTRL_UP:
+		// case SC_RCTRL_UP:
+		ctrl_pressed = 0;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_LALT:
+		// case SC_RALT:
+		alt_pressed = 1;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	case SC_LALT_UP:
+		// case SC_RALT_UP:
+		alt_pressed = 0;
+		outb(PIC1_COMMAND, 0x20);
+		return;
+		break;
+	default:
+		break;
+	}
+
+	static unsigned int tab_length = 4;
+
+	// symbol keys
 	if (!(scancode & 0x80)) { // key press (not release)
-		char c = scancode_ascii[scancode];
+		char c = shift_pressed ? scancode_ascii_shift[scancode] : scancode_ascii[scancode];
+
+		// if cant get char, ignore
 		if (!c) {
-			outb(PIC1_COMMAND, 0x20); // if cant get char, ignore
+			outb(PIC1_COMMAND, 0x20);
 			return;
+		}
+
+		if (ctrl_pressed) {
+			if (clower(c) == 'c') {
+				// cancel current line
+				input_buffer[input_length] = 0;
+				input_length               = 0;
+				vga_puts("^c\n");
+				shell_prompt();
+				outb(PIC1_COMMAND, 0x20);
+				return;
+			}
+		}
+
+		if (alt_pressed) {
+			(void)0;
 		}
 
 		switch (c) {
@@ -384,10 +498,18 @@ void irq1_handler(void) {
 				vga_putc('\b');
 			}
 			break;
+		case '\t':
+			if (input_length < INPUT_BUFFER_SIZE - tab_length - 1) {
+				for (int i = 0; i < tab_length; i++) {
+					input_buffer[input_length++] = ' ';
+					vga_putc(' ');
+				}
+			}
+			break;
 		default:
 			if (input_length < INPUT_BUFFER_SIZE - 1) {
 				input_buffer[input_length++] = c;
-				vga_putc(scancode_ascii[scancode]);
+				vga_putc(c);
 			}
 			break;
 		}
