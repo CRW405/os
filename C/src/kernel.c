@@ -89,8 +89,8 @@ static void (*const isr_stub_table[32])(void) = {
 struct idt_entry {
 	uint16_t offset_low;  // handler address bits 0..15
 	uint16_t selector;    // code segment selector
-	uint8_t ist;          // interrupt stack table index, 0 = not used
-	uint8_t type_attr;    // gate type, privilege level, present bit
+	uint8_t  ist;         // interrupt stack table index, 0 = not used
+	uint8_t  type_attr;   // gate type, privilege level, present bit
 	uint16_t offset_mid;  // handler address bits 16..31
 	uint32_t offset_high; // handler address bits 32..63
 	uint32_t zero;        // reserved, must be zero
@@ -102,19 +102,19 @@ struct idt_ptr {
 } __attribute__((packed));
 
 static struct idt_entry idt[IDT_SIZE];
-static struct idt_ptr idt_ptr;
+static struct idt_ptr   idt_ptr;
 
 // fills in one IDT entry so `vector` jumps to `handler` on interrupt
 void idt_set_entry(int vector, void (*handler)(), uint8_t type_attr) {
 	uint64_t address = (uint64_t)handler; // handler address as a 64-bit integer
 
-	idt[vector].offset_low = address & 0xFFFF;
-	idt[vector].selector = 0x08;
-	idt[vector].ist = 0;
-	idt[vector].type_attr = type_attr;
-	idt[vector].offset_mid = (address >> 16) & 0xFFFF;
+	idt[vector].offset_low  = address & 0xFFFF;
+	idt[vector].selector    = 0x08;
+	idt[vector].ist         = 0;
+	idt[vector].type_attr   = type_attr;
+	idt[vector].offset_mid  = (address >> 16) & 0xFFFF;
 	idt[vector].offset_high = (address >> 32) & 0xFFFFFFFF;
-	idt[vector].zero = 0;
+	idt[vector].zero        = 0;
 }
 
 // builds the IDT and loads it with the `lidt` instruction
@@ -127,7 +127,7 @@ void idt_init(void) {
 	idt_set_entry(33, irq1, GATE_INTERRUPT); // IRQ1 for keyboard, 32 + 1
 
 	idt_ptr.limit = sizeof(idt) - 1;
-	idt_ptr.base = (uint64_t)&idt;
+	idt_ptr.base  = (uint64_t)&idt;
 
 	__asm__ volatile("lidt %0" : : "m"(idt_ptr));
 }
@@ -136,8 +136,8 @@ void idt_init(void) {
 // VGA text mode output
 // =====================================================================
 
-const int VGA_WIDTH = 80;
-const int VGA_HEIGHT = 25;
+const int            VGA_WIDTH                = 80;
+const int            VGA_HEIGHT               = 25;
 const unsigned short VGA_WHITE_ON_BLACK_STYLE = 0x0700;
 
 // vga text memory, ASCII byte + color byte
@@ -473,7 +473,7 @@ char clower(char c) {
 // lowercase a string
 const char *strlower(const char *s) {
 	static char buf[256];
-	int i;
+	int         i;
 	for (i = 0; s[i]; i++) {
 		buf[i] = clower(s[i]);
 	}
@@ -488,7 +488,7 @@ const char *itoa(int value, char *buffer, int base) {
 	}
 
 	char *ptr = buffer, *ptr1 = buffer, tmp_char;
-	int tmp_value;
+	int   tmp_value;
 
 	do {
 		tmp_value = value;
@@ -504,8 +504,8 @@ const char *itoa(int value, char *buffer, int base) {
 
 	while (ptr1 < ptr) {
 		tmp_char = *ptr;
-		*ptr-- = *ptr1;
-		*ptr1++ = tmp_char;
+		*ptr--   = *ptr1;
+		*ptr1++  = tmp_char;
 	}
 	return buffer;
 }
@@ -546,7 +546,7 @@ void parse_multiboot2_info(uint32_t addr) {
 			break;
 		default:
 			vga_puts("Unknown tag type: ");
-			int tag_type = tag->type;
+			int  tag_type = tag->type;
 			char buffer[12];
 			itoa(tag_type, buffer, 10);
 			vga_puts(buffer);
@@ -554,7 +554,7 @@ void parse_multiboot2_info(uint32_t addr) {
 			break;
 		}
 		uint32_t size = (tag->size + 7) & ~7; // align to 8 bytes
-		tag = (multiboot2_tag_t *)((uint8_t *)tag + size);
+		tag           = (multiboot2_tag_t *)((uint8_t *)tag + size);
 	}
 }
 
@@ -578,7 +578,7 @@ void cmd_divide_by_zero(const char *args) {
 	(void)args;
 	// -O should be at 0 to prevent the compiler from optimizing out the divide by zero
 	volatile int a = 1, b = 0;
-	int c = a / b; // this will trigger the divide by zero exception
+	int          c = a / b; // this will trigger the divide by zero exception
 	(void)c;
 }
 
@@ -587,7 +587,7 @@ void cmd_page_fault(const char *args) {
 	// boot64.s only identity-maps the first 1GB, so this address is
 	// guaranteed to be unmapped and trigger a #PF (vector 14)
 	volatile uint64_t *bad_ptr = (volatile uint64_t *)0xFFFFFFFF00000000ULL;
-	*bad_ptr = 0;
+	*bad_ptr                   = 0;
 }
 
 void cmd_toggle_cursor(const char *args) {
@@ -610,20 +610,35 @@ void cmd_parse_multiboot(const char *args) {
 	parse_multiboot2_info(multiboot_info);
 }
 
+void cmd_print_cmds(const char *args);
+
 struct cmd {
 	const char *name;
 	void (*handler)(const char *args);
+	const char *desc;
 };
 
-static const struct cmd cmd_table[] = {
-	{ "e",    cmd_echo            },
-	{ "clr",  cmd_clear           },
-	{ "dbz",  cmd_divide_by_zero  },
-	{ "pf",   cmd_page_fault      },
-	{ "tcur", cmd_toggle_cursor   },
-	{ "mb2",  cmd_parse_multiboot },
-	{ 0,      0	               }  // sentinel
+int                     cmd_table_length = 7;
+static const struct cmd cmd_table[]      = {
+	{ "e",    cmd_echo,            "echo back the following string"   },
+	{ "clr",  cmd_clear,           "clear the screen"                 },
+	{ "dbz",  cmd_divide_by_zero,  "trigger a divide by zero error"   },
+	{ "pf",   cmd_page_fault,      "trigger a page fault error"       },
+	{ "tcur", cmd_toggle_cursor,   "toggle the vga cursor on and off" },
+	{ "mb2",  cmd_parse_multiboot, "print the multiboot2 tags"        },
+	{ "help", cmd_print_cmds,      "show this list"                   },
+	{ 0,      0,	               0	                              }  // sentinel
 };
+
+void cmd_print_cmds(const char *args) {
+	vga_puts("Commands:\n");
+	for (int i = 0; i < cmd_table_length; i++) {
+		vga_puts(cmd_table[i].name);
+		vga_puts(": ");
+		vga_puts(cmd_table[i].desc);
+		vga_puts("\n");
+	}
+}
 
 void shell_dispatch(const char *line) {
 	for (int i = 0; cmd_table[i].name; i++) {
@@ -643,7 +658,7 @@ void shell_dispatch(const char *line) {
 
 #define INPUT_BUFFER_SIZE 128
 static char input_buffer[INPUT_BUFFER_SIZE];
-static int input_length = 0;
+static int  input_length = 0;
 
 const char *prompt = "O-(^W^)-> ";
 
@@ -666,9 +681,9 @@ void shell_prompt(void) {
 #define SC_RALT_UP 0xB8
 
 static unsigned char shift_pressed = 0;
-static unsigned char caps_lock_on = 0;
-static unsigned char ctrl_pressed = 0;
-static unsigned char alt_pressed = 0;
+static unsigned char caps_lock_on  = 0;
+static unsigned char ctrl_pressed  = 0;
+static unsigned char alt_pressed   = 0;
 
 // scancode set 1 -> ASCII, indexed by the raw byte read from the keyboard
 // controller. 0 means "no ASCII equivalent" (shift, ctrl, arrow keys, etc).
@@ -692,7 +707,7 @@ static const char scancode_ascii_shift[128] = {
 
 // vector 33 (IRQ1): keyboard
 void irq1_handler(void) {
-	uint8_t scancode = inb(0x60);
+	uint8_t    scancode = inb(0x60);
 	static int extended = 0;
 
 	// handle extended scancodes such as arrow keys, which start with 0xE0
@@ -792,7 +807,7 @@ void irq1_handler(void) {
 			if (clower(c) == 'c') {
 				// cancel current line
 				input_buffer[input_length] = 0;
-				input_length = 0;
+				input_length               = 0;
 				vga_puts("^c\n");
 				shell_prompt();
 				outb(PIC1_COMMAND, 0x20);
