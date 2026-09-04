@@ -46,6 +46,14 @@ mb2_header_end:
 # =====================================================================
 
 .section .bss
+.align 4
+.global multiboot_info    # exported so kernel.c can read the saved pointer later,
+                           # %ebx itself gets clobbered long before the shell exists
+multiboot_magic:
+    .skip 4
+multiboot_info:
+    .skip 4
+
 .align 4096
 p4_table:
     .skip 4096
@@ -92,6 +100,9 @@ gdt64_pointer:
 _start:
     mov $stack_top, %esp   # set up the stack, grows down from stack_top
 
+    mov %eax, multiboot_magic
+    mov %ebx, multiboot_info
+
     call check_multiboot
     call check_cpuid
     call check_long_mode
@@ -104,7 +115,7 @@ _start:
 
 # GRUB leaves this magic value in %eax on multiboot2 boot, bail if it's missing
 check_multiboot:
-    cmp $0x36D76289, %eax
+    cmp $0x36D76289, multiboot_magic
     jne .halt
     ret
 
