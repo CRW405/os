@@ -866,7 +866,7 @@ void kernel_main(void) {
 	clear_vga();
 	enable_cursor(13, 14);
 	vga_puts("Hello, World! Goodbye. Space?\n");
-	vga_puts("enter help to see list of commands.\n");
+	vga_puts("enter 'help' to see list of commands.\n");
 	shell_prompt();
 
 	for (;;) {
