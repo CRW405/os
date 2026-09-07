@@ -39,6 +39,15 @@ set(CMAKE_EXE_LINKER_FLAGS
 
 add_executable(kernel.elf
     ${BOOT_SOURCE}
+    src/io.c
+    src/vga.c
+    src/pic.c
+    src/idt.c
+    src/interrupts.c
+    src/keyboard.c
+    src/string.c
+    src/multiboot.c
+    src/shell.c
     src/kernel.c
     src/isr.s
 )
