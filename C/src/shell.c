@@ -46,7 +46,9 @@ void cmd_parse_multiboot(const char *args) {
 	multiboot_print_tags();
 }
 
-void cmd_print_cmds(const char *args); // forward declaration
+void cmd_print_help(const char *args);      // forward declaration
+void cmd_print_cmds(const char *args);      // forward declaration
+void cmd_print_shortcuts(const char *args); // forward declaration
 
 struct cmd {
 	const char *name;
@@ -61,8 +63,22 @@ static const struct cmd cmd_table[] = {
 	{ "pf",   cmd_page_fault,      "trigger a page fault error"       },
 	{ "tcur", cmd_toggle_cursor,   "toggle the vga cursor on and off" },
 	{ "mb2",  cmd_parse_multiboot, "print the multiboot2 tags"        },
-	{ "help", cmd_print_cmds,      "show this list"                   },
+	{ "help", cmd_print_help,      "show this list"                   },
 	{ 0,      0,	               0	                              }  // sentinel
+};
+
+// handler left null due to shortcuts not directly calling a command handler
+static const struct cmd shortcut_table[] = {
+	{ "CTRL + C",   0, "cancel the current line"                },
+	{ "CTRL + U",   0, "clear the current line"                 },
+	{ "CTRL + W",   0, "delete the word before the cursor"      },
+	{ "CTRL + L",   0, "clear the screen"                       },
+	{ "LEFT/RIGHT", 0, "move the cursor one character"          },
+	{ "HOME/END",   0, "jump to the start/end of the line"      },
+	{ "BACKSPACE",  0, "delete the character before the cursor" },
+	{ "DELETE",     0, "delete the character under the cursor"  },
+	{ "TAB",        0, "insert spaces"                          },
+	{ 0,	        0, 0	                                    }  // sentinel
 };
 
 void cmd_print_cmds(const char *args) {
@@ -77,6 +93,25 @@ void cmd_print_cmds(const char *args) {
 		vga_putc('\n');
 		i++;
 	}
+}
+
+void cmd_print_shortcuts(const char *args) {
+	(void)args;
+	vga_puts("Shortcuts:\n");
+	int i = 0;
+	while (shortcut_table[i].name) {
+		vga_puts("    ");
+		vga_puts(shortcut_table[i].name);
+		vga_puts(" : ");
+		vga_puts(shortcut_table[i].desc);
+		vga_putc('\n');
+		i++;
+	}
+}
+
+void cmd_print_help(const char *args) {
+	cmd_print_cmds(args);
+	cmd_print_shortcuts(args);
 }
 
 void shell_dispatch(const char *line) {
